@@ -1,5 +1,8 @@
 const http = require('http');
-http.createServer((req, res) => res.end('Bot Online')).listen(process.env.PORT || 8000);
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot Online');
+}).listen(process.env.PORT || 8000);
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
