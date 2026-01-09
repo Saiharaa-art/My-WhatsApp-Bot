@@ -1,29 +1,18 @@
-const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { exec } = require('child_process');
+const fs = require('fs');
 const axios = require('axios');
 const http = require('http');
-const qrcode = require('qrcode-terminal');
 
 http.createServer((req, res) => {
   res.writeHead(200);
-  res.end('Bot WhatsApp by Naffdz is Online');
+  res.end('Bot Naffdz Gacor Online');
 }).listen(process.env.PORT || 8000);
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('sesi_wa');
-  const sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true,
-    browser: ["Bot WhatsApp by Naffdz", "Safari", "1.0.0"]
-  });
-
+  const sock = makeWASocket({ auth: state, printQRInTerminal: true });
   sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, qr } = update;
-    if (qr) qrcode.generate(qr, { small: true });
-    if (connection === 'close') startBot();
-    else if (connection === 'open') console.log('✅ BOT NAFFDZ SUDAH SIAP!');
-  });
 
   sock.ev.on('messages.upsert', async (chat) => {
     try {
@@ -31,31 +20,46 @@ async function startBot() {
       if (!m.message || m.key.fromMe) return;
       const from = m.key.remoteJid;
       const type = Object.keys(m.message)[0];
-      const body = (type === 'conversation') ? m.message.conversation : (type === 'extendedTextMessage') ? m.message.extendedTextMessage.text : (type === 'imageMessage') ? m.message.imageMessage.caption : '';
-      
+      const body = (type === 'conversation') ? m.message.conversation : (type === 'imageMessage') ? m.message.imageMessage.caption : (type === 'extendedTextMessage') ? m.message.extendedTextMessage.text : '';
+      const text = body.slice(body.indexOf(' ') + 1);
       const reply = (teks) => sock.sendMessage(from, { text: teks }, { quoted: m });
 
-      if (body.startsWith('!menu')) {
-        reply(`*── 「 BOT BY NAFFDZ 」 ──*\n\n🤖 *AI:* !ai [tanya]\n🎨 *STIKER:* !s (balas foto)\n📢 *TAG ALL:* !all\n\n_Bot by Naffdz_`);
+      // --- FITUR STIKER TULISAN (PRO) ---
+      if (body.startsWith('!tts')) {
+        if (!text || body === '!tts') return reply('Contoh: !tts Naffdz Ganteng');
+        reply('📝 Sedang merangkai kata jadi stiker...');
+        const ttsUrl = `https://api.lolhuman.xyz/api/memegen?apikey=Gataubibi&text=${encodeURIComponent(text)}`;
+        
+        const res = await axios({ method: 'get', url: ttsUrl, responseType: 'arraybuffer' });
+        fs.writeFileSync('tts.jpg', res.data);
+        exec(`ffmpeg -i tts.jpg -vcodec libwebp -vf "scale=512:512:force_original_aspect_ratio=increase,fps=15,crop=512:512" tts.webp`, (err) => {
+          if (err) return reply('Gagal! Coba lagi nanti.');
+          sock.sendMessage(from, { sticker: fs.readFileSync('tts.webp') });
+          fs.unlinkSync('tts.jpg'); fs.unlinkSync('tts.webp');
+        });
       }
 
+      // --- FITUR STIKER GAMBAR (PRO) ---
+      if (body.startsWith('!s')) {
+        const isQuotedImage = type === 'extendedTextMessage' && m.message.extendedTextMessage.contextInfo?.quotedMessage?.imageMessage;
+        if (type === 'imageMessage' || isQuotedImage) {
+          reply('🎨 Otw jadi stiker pro...');
+          const stream = await downloadMediaMessage(m, 'buffer', {});
+          fs.writeFileSync('temp.jpg', stream);
+          exec(`ffmpeg -i temp.jpg -vcodec libwebp -vf "scale=512:512:force_original_aspect_ratio=increase,fps=15,crop=512:512" temp.webp`, (err) => {
+            if (err) return reply('Gagal! Klik TRIGGER BUILD di Koyeb.');
+            sock.sendMessage(from, { sticker: fs.readFileSync('temp.webp') });
+          });
+        }
+      }
+
+      // --- FITUR AI GACOR ---
       if (body.startsWith('!ai')) {
-        const text = body.slice(4);
-        if (!text) return reply('Tanya apa?');
-        try {
-          const res = await axios.get(`https://widipe.com/gemini?text=${encodeURIComponent(text)}`);
-          reply(res.data.result);
-        } catch (e) { reply('Server AI lagi sibuk, coba lagi nanti!'); }
+        const res = await axios.get(`https://widipe.com/gemini?text=${encodeURIComponent(text)}`);
+        reply(res.data.result);
       }
 
-      if (body.startsWith('!all')) {
-        const groupMetadata = await sock.groupMetadata(from);
-        const participants = groupMetadata.participants;
-        let teksTag = `*📢 TAG ALL BY NAFFDZ*\n\n`;
-        for (let mem of participants) teksTag += `@${mem.id.split('@')[0]}\n`;
-        sock.sendMessage(from, { text: teksTag, mentions: participants.map(a => a.id) });
-      }
-    } catch (err) { console.log(err); }
+    } catch (e) { console.log(e); }
   });
 }
 startBot();
