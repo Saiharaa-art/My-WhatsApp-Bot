@@ -1,7 +1,7 @@
 {
-  "name": "bot-naffdz",
+  "name": "naffdz-bot",
   "version": "1.0.0",
-  "description": "WA Bot",
+  "description": "WhatsApp Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
