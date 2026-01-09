@@ -1,8 +1,3 @@
-const http = require('http');
-http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Bot Online');
-}).listen(process.env.PORT || 8000)
 
 const http = require('http');
 const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
