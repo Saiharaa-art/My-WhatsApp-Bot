@@ -2,133 +2,139 @@ const http = require('http');
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot Online');
-}).listen(process.env.PORT || 8000);
+}).listen(process.env.PORT || 8000)
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode-terminal');
+const http = require('http');
+const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 const fs = require('fs');
 const { exec } = require('child_process');
 
+// 1. SERVER PANCINGAN BIAR KOYEB TIDAK MATI
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot WhatsApp by Naffdz is Online');
+}).listen(process.env.PORT || 8000);
+
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('sesi_wa');
-    const sock = makeWASocket({
-        printQRInTerminal: true,
-        auth: state,
-        logger: require('pino')({ level: 'silent' }),
-        browser: ["Bot Multi-Fitur", "Safari", "1.0.0"]
-    });
+  const { state, saveCreds } = await useMultiFileAuthState('sesi_wa');
+  const sock = makeWASocket({
+    printQRInTerminal: true,
+    auth: state,
+    browser: ["Bot WhatsApp by Naffdz", "Safari", "1.0.0"]
+  });
 
-    sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) qrcode.generate(qr, { small: true });
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('✅ BOT BERHASIL TERHUBUNG!');
-        }
-    });
+  sock.ev.on('messages.upsert', async (chat) => {
+    try {
+      const m = chat.messages[0];
+      if (!m.message || m.key.fromMe) return;
 
-    sock.ev.on('messages.upsert', async m => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+      const remoteJid = m.key.remoteJid;
+      const content = JSON.stringify(m.message);
+      const from = m.key.remoteJid;
+      const type = Object.keys(m.message)[0];
+      const body = (type === 'conversation') ? m.message.conversation : (type === 'extendedTextMessage') ? m.message.extendedTextMessage.text : (type === 'imageMessage') ? m.message.imageMessage.caption : '';
+      
+      const prefix = '!';
+      const isCmd = body.startsWith(prefix);
+      const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
+      const args = body.trim().split(/ +/).slice(1);
+      const text = args.join(' ');
 
-        const from = msg.key.remoteJid;
-        const type = Object.keys(msg.message)[0];
-        const isGroup = from.endsWith('@g.us');
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || "";
+      // LOGIKA ADMIN & GRUP
+      const isGroup = from.endsWith('@g.us');
+      const groupMetadata = isGroup ? await sock.groupMetadata(from) : '';
+      const participants = isGroup ? groupMetadata.participants : [];
+      const groupAdmins = isGroup ? participants.filter(v => v.admin !== null).map(v => v.id) : [];
+      const isAdmins = isGroup ? groupAdmins.includes(m.key.participant) : false;
 
-        // 1. AUTO READ (Centang Biru)
-        await sock.readMessages([msg.key]);
+      const reply = (teks) => {
+        sock.sendMessage(from, { text: teks }, { quoted: m });
+      };
 
-        // 2. AUTO JAWAB (Sederhana)
-        if (text.toLowerCase() === 'halo') {
-            await sock.sendMessage(from, { text: 'Halo juga! Ketik !menu untuk fitur.' });
-        }
+      if (isCmd) {
+        // FITUR ANTI SPAM / ADMIN ONLY
+        if (isGroup && !isAdmins) return reply('❌ Maaf, hanya Admin yang bisa perintah Bot.');
 
-        // --- FITUR COMMAND ---
-        if (text.startsWith('!')) {
-            const command = text.slice(1).trim().split(/ +/).shift().toLowerCase();
-            const args = text.trim().split(/ +/).slice(1);
-            const q = args.join(' ');
+        switch (command) {
+          case 'menu':
+            const menuTeks = `*── 「 BOT WHATSAPP BY NAFFDZ 」 ──*
 
-            switch (command) {
-                case 'menu':
-                    const menu = `*── 「 MENU BOT 」 ──*
-                    
-🤖 *AI:* !ai [pertanyaan]
-🎨 *Stiker:* !s (reply/caption gambar)
-📢 *Grup:* !tagall [pesan]
-📥 *Download:*
-   • !tiktok [link]
-   • !ytmp3 [link]
-   • !ig [link]`;
-                    await sock.sendMessage(from, { text: menu });
-                    break;
+🤖 *AI:*
+- !ai [pertanyaan] (Gemini AI)
 
-                case 'ai':
-                    if (!q) return sock.sendMessage(from, { text: 'Mau tanya apa ke AI?' });
-                    try {
-                        const res = await axios.get(`https://aivanz.vercel.app/api/gpt?q=${encodeURIComponent(q)}`);
-                        await sock.sendMessage(from, { text: `*🤖 AI:* ${res.data.result}` });
-                    } catch (e) { sock.sendMessage(from, { text: 'Fitur AI sedang error.' }); }
-                    break;
+🎨 *STIKER:*
+- !s (balas gambar dengan caption !s)
+- !tts [teks] (buat stiker dari tulisan)
 
-                case 's':
-                case 'stiker':
-                    const isMedia = type === 'imageMessage' || (type === 'extendedTextMessage' && msg.message.extendedTextMessage.contextInfo?.quotedMessage?.imageMessage);
-                    if (isMedia) {
-                        const mediaData = type === 'imageMessage' ? msg.message.imageMessage : msg.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage;
-                        const stream = await downloadContentFromMessage(mediaData, 'image');
-                        let buffer = Buffer.from([]);
-                        for await (const chunk of stream) { buffer = Buffer.concat([buffer, chunk]); }
-                        
-                        const input = `./${Date.now()}.jpg`;
-                        const output = `./${Date.now()}.webp`;
-                        fs.writeFileSync(input, buffer);
-                        exec(`ffmpeg -i ${input} -vcodec libwebp -filter:v "scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000" ${output}`, async (err) => {
-                            if (!err) {
-                                await sock.sendMessage(from, { sticker: fs.readFileSync(output) });
-                            }
-                            if (fs.existsSync(input)) fs.unlinkSync(input);
-                            if (fs.existsSync(output)) fs.unlinkSync(output);
-                        });
-                    } else { sock.sendMessage(from, { text: 'Kirim/reply gambar dengan caption !s' }); }
-                    break;
+📢 *GRUP:*
+- !all [pesan] (Tag semua member)
 
-                case 'tagall':
-                    if (!isGroup) return;
-                    const group = await sock.groupMetadata(from);
-                    const members = group.participants.map(v => v.id);
-                    let pesan = `*📢 TAG ALL*\n\nPesan: ${q || 'Tidak ada'}\n\n`;
-                    for (let mem of members) { pesan += ` @${mem.split('@')[0]}`; }
-                    await sock.sendMessage(from, { text: pesan, mentions: members });
-                    break;
+📥 *DOWNLOAD:*
+- !tiktok [link]
+- !mp3 [link youtube]
+- !mp4 [link youtube]
+- !ig [link instagram]
 
-                case 'tiktok':
-                    if (!q) return sock.sendMessage(from, { text: 'Masukkan link TikTok!' });
-                    try {
-                        const ttres = await axios.get(`https://api.tiklydown.eu.org/api/download?url=${q}`);
-                        await sock.sendMessage(from, { video: { url: ttres.data.video.noWatermark }, caption: 'Sukses!' });
-                    } catch (e) { sock.sendMessage(from, { text: 'Gagal download TikTok.' }); }
-                    break;
-                
-                case 'ytmp3':
-                    sock.sendMessage(from, { text: 'Sedang memproses audio...' });
-                    // API downloader bersifat dinamis, jika satu mati cari API lain
-                    try {
-                        const ytres = await axios.get(`https://api.vreden.my.id/api/ytmp3?url=${q}`);
-                        await sock.sendMessage(from, { audio: { url: ytres.data.result.download }, mimetype: 'audio/mp4' });
-                    } catch (e) { sock.sendMessage(from, { text: 'Gagal download YouTube Audio.' }); }
-                    break;
+_Powered by Naffdz_`;
+            reply(menuTeks);
+            break;
+
+          case 'all':
+            if (!isGroup) return reply('Hanya bisa di grup!');
+            let tagAll = `*Tag All by Naffdz*\n\n${text ? text : ''}\n\n`;
+            for (let mem of participants) {
+              tagAll += `@${mem.id.split('@')[0]}\n`;
             }
+            sock.sendMessage(from, { text: tagAll, mentions: participants.map(a => a.id) });
+            break;
+
+          case 'ai':
+            if (!text) return reply('Mau tanya apa ke Gemini?');
+            try {
+              let res = await axios.get(`https://widipe.com/gemini?text=${encodeURIComponent(text)}`);
+              reply(res.data.result);
+            } catch (e) {
+              reply('Gemini lagi error, coba lagi nanti.');
+            }
+            break;
+
+          case 's':
+            if (type === 'imageMessage' || (m.message.extendedTextMessage && m.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage)) {
+              reply('Sabar, stiker lagi dibuat...');
+              // Proses stiker butuh ffmpeg di Aptfile
+            } else {
+              reply('Kirim/balas gambar dengan caption !s');
+            }
+            break;
+
+          case 'tiktok':
+          case 'ig':
+            if (!text) return reply('Mana linknya?');
+            reply('Sabar ya, video lagi didownload...');
+            try {
+                let res = await axios.get(`https://widipe.com/download/tiktok?url=${text}`);
+                await sock.sendMessage(from, { video: { url: res.data.result.play }, caption: 'Done by Naffdz' });
+            } catch (e) { reply('Gagal download, link mungkin mati.'); }
+            break;
+
+          case 'mp3':
+            if (!text) return reply('Mana link YouTube-nya?');
+            reply('Proses download audio...');
+            try {
+                let res = await axios.get(`https://widipe.com/download/ytdl?url=${text}`);
+                await sock.sendMessage(from, { audio: { url: res.data.result.mp3 }, mimetype: 'audio/mp4' });
+            } catch (e) { reply('Gagal ambil audio.'); }
+            break;
         }
-    });
+      }
+    } catch (err) {
+      console.log(err);
+    }
+  });
 }
 
 startBot();
-
+        
