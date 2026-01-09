@@ -1,12 +1,8 @@
-
-const http = require('http');
 const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const axios = require('axios');
-const fs = require('fs');
-const qrcode = require('qrcode-terminal');
-const { exec } = require('child_process');
+const http = require('http');
 
-// 1. SERVER PANCINGAN BIAR KOYEB TIDAK MATI
+// SERVER PANCINGAN
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot WhatsApp by Naffdz is Online');
@@ -22,130 +18,69 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  // PENANGAN QR CODE & KONEKSI
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
-        console.log('SCAN QR INI DI HP KAMU:');
-        require('qrcode-terminal').generate(qr, { small: true });
+      console.log('SCAN QR INI:');
+      require('qrcode-terminal').generate(qr, { small: true });
     }
-    if (connection === 'close') {
-        const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
-        console.log('Koneksi terputus, mencoba hubungkan kembali...', shouldReconnect);
-        if (shouldReconnect) startBot();
-    } else if (connection === 'open') {
-        console.log('✅ BOT BERHASIL TERHUBUNG!');
-    }
-});
+    if (connection === 'close') startBot();
+    else if (connection === 'open') console.log('✅ BERHASIL TERHUBUNG!');
+  });
 
   sock.ev.on('messages.upsert', async (chat) => {
     try {
       const m = chat.messages[0];
       if (!m.message || m.key.fromMe) return;
 
-      const remoteJid = m.key.remoteJid;
-      const content = JSON.stringify(m.message);
       const from = m.key.remoteJid;
       const type = Object.keys(m.message)[0];
       const body = (type === 'conversation') ? m.message.conversation : (type === 'extendedTextMessage') ? m.message.extendedTextMessage.text : (type === 'imageMessage') ? m.message.imageMessage.caption : '';
-      
       const prefix = '!';
       const isCmd = body.startsWith(prefix);
       const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
       const args = body.trim().split(/ +/).slice(1);
       const text = args.join(' ');
 
-      // LOGIKA ADMIN & GRUP
-      const isGroup = from.endsWith('@g.us');
-      const groupMetadata = isGroup ? await sock.groupMetadata(from) : '';
-      const participants = isGroup ? groupMetadata.participants : [];
-      const groupAdmins = isGroup ? participants.filter(v => v.admin !== null).map(v => v.id) : [];
-      const isAdmins = isGroup ? groupAdmins.includes(m.key.participant) : false;
-
       const reply = (teks) => {
         sock.sendMessage(from, { text: teks }, { quoted: m });
       };
 
       if (isCmd) {
-        // FITUR ANTI SPAM / ADMIN ONLY
-        if (isGroup && !isAdmins) return reply('❌ Maaf, hanya Admin yang bisa perintah Bot.');
-
         switch (command) {
           case 'menu':
-            const menuTeks = `*── 「 BOT WHATSAPP BY NAFFDZ 」 ──*
-
-🤖 *AI:*
-- !ai [pertanyaan] (Gemini AI)
-
-🎨 *STIKER:*
-- !s (balas gambar dengan caption !s)
-- !tts [teks] (buat stiker dari tulisan)
-
-📢 *GRUP:*
-- !all [pesan] (Tag semua member)
-
-📥 *DOWNLOAD:*
-- !tiktok [link]
-- !mp3 [link youtube]
-- !mp4 [link youtube]
-- !ig [link instagram]
-
-_Powered by Naffdz_`;
-            reply(menuTeks);
-            break;
-
-          case 'all':
-            if (!isGroup) return reply('Hanya bisa di grup!');
-            let tagAll = `*Tag All by Naffdz*\n\n${text ? text : ''}\n\n`;
-            for (let mem of participants) {
-              tagAll += `@${mem.id.split('@')[0]}\n`;
-            }
-            sock.sendMessage(from, { text: tagAll, mentions: participants.map(a => a.id) });
+            reply(`*── 「 BOT BY NAFFDZ 」 ──*\n\n🤖 *AI:* !ai [tanya]\n🎨 *STIKER:* !s (balas foto)\n📢 *GRUP:* !all [teks]\n📥 *DL:* !tiktok, !mp3, !mp4\n\n_Powered by Naffdz_`);
             break;
 
           case 'ai':
             if (!text) return reply('Mau tanya apa ke Gemini?');
             try {
-              let res = await axios.get(`https://widipe.com/gemini?text=${encodeURIComponent(text)}`);
+              // API Gemini Cadangan yang lebih stabil
+              let res = await axios.get(`https://api.lolhuman.xyz/api/gemini?apikey=Gataubibi&text=${encodeURIComponent(text)}`);
               reply(res.data.result);
             } catch (e) {
-              reply('Gemini lagi error, coba lagi nanti.');
+              reply('Aduh, Gemini lagi pusing. Coba lagi ya!');
             }
+            break;
+
+          case 'all':
+            if (!from.endsWith('@g.us')) return reply('Cuma bisa di grup!');
+            const groupMetadata = await sock.groupMetadata(from);
+            const participants = groupMetadata.participants;
+            let teksTag = `*Tag All by Naffdz*\n\n${text}\n\n`;
+            for (let mem of participants) teksTag += `@${mem.id.split('@')[0]}\n`;
+            sock.sendMessage(from, { text: teksTag, mentions: participants.map(a => a.id) });
             break;
 
           case 's':
-            if (type === 'imageMessage' || (m.message.extendedTextMessage && m.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage)) {
-              reply('Sabar, stiker lagi dibuat...');
-              // Proses stiker butuh ffmpeg di Aptfile
-            } else {
-              reply('Kirim/balas gambar dengan caption !s');
-            }
-            break;
-
-          case 'tiktok':
-          case 'ig':
-            if (!text) return reply('Mana linknya?');
-            reply('Sabar ya, video lagi didownload...');
-            try {
-                let res = await axios.get(`https://widipe.com/download/tiktok?url=${text}`);
-                await sock.sendMessage(from, { video: { url: res.data.result.play }, caption: 'Done by Naffdz' });
-            } catch (e) { reply('Gagal download, link mungkin mati.'); }
-            break;
-
-          case 'mp3':
-            if (!text) return reply('Mana link YouTube-nya?');
-            reply('Proses download audio...');
-            try {
-                let res = await axios.get(`https://widipe.com/download/ytdl?url=${text}`);
-                await sock.sendMessage(from, { audio: { url: res.data.result.mp3 }, mimetype: 'audio/mp4' });
-            } catch (e) { reply('Gagal ambil audio.'); }
+            reply('Fitur stiker butuh FFmpeg, pastikan Aptfile sudah ada!');
+            // Logika stiker di sini
             break;
         }
       }
-    } catch (err) {
-      console.log(err);
-    }
+    } catch (err) { console.log(err); }
   });
 }
 
 startBot();
-        
