@@ -3,6 +3,7 @@ const http = require('http');
 const { default: makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 const fs = require('fs');
+const qrcode = require('qrcode-terminal');
 const { exec } = require('child_process');
 
 // 1. SERVER PANCINGAN BIAR KOYEB TIDAK MATI
@@ -20,6 +21,21 @@ async function startBot() {
   });
 
   sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+        console.log('SCAN QR INI DI HP KAMU:');
+        require('qrcode-terminal').generate(qr, { small: true });
+    }
+    if (connection === 'close') {
+        const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
+        console.log('Koneksi terputus, mencoba hubungkan kembali...', shouldReconnect);
+        if (shouldReconnect) startBot();
+    } else if (connection === 'open') {
+        console.log('✅ BOT BERHASIL TERHUBUNG!');
+    }
+});
 
   sock.ev.on('messages.upsert', async (chat) => {
     try {
